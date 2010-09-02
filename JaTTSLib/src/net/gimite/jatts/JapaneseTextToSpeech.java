@@ -1,6 +1,5 @@
 package net.gimite.jatts;
 
-import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -39,7 +38,7 @@ public class JapaneseTextToSpeech {
     private static Speech currentSpeech;
     private static MediaPlayer currentPlayer;
 
-    private String tempPath;
+    private Context context;
     private Handler handler = new Handler();
     private MediaPlayer player;
     private State state = State.IDLE;
@@ -48,7 +47,7 @@ public class JapaneseTextToSpeech {
     private OnErrorListener onError;
 
     public JapaneseTextToSpeech(Context context, TextToSpeech.OnInitListener listener) {
-        this.tempPath = context.getApplicationInfo().dataDir + "/jatts.temp.mp3";
+        this.context = context;
         this.player = new MediaPlayer();
         player.setOnCompletionListener(onComplete);
         if (listener != null) listener.onInit(TextToSpeech.SUCCESS);
@@ -78,7 +77,7 @@ public class JapaneseTextToSpeech {
         }
         stop();
         int id = ++currentId;
-        currentSpeech = new Speech(text, params, id, tempPath);
+        currentSpeech = new Speech(text, params, id, null);
         currentSpeech.start();
     }
     
@@ -103,6 +102,7 @@ public class JapaneseTextToSpeech {
     
     private class Speech extends Thread {
         
+        private final String TEMP_FILE_NAME = "jatts.temp.mp3";
         private String text;
         private HashMap<String, String> params;
         private int id;
@@ -113,12 +113,20 @@ public class JapaneseTextToSpeech {
             this.text = text;
             this.params = params != null ? params : new HashMap<String, String>();
             this.id = id;
-            this.localPath = localPath;
-            // To prevent thread for previous speech (which may be still running)
-            // from writing to the same file.
-            new File(localPath).delete();
             try {
-                this.localFile = new FileOutputStream(localPath);
+                if (localPath == null) {
+                    this.localPath = context.getFilesDir() + "/" + TEMP_FILE_NAME;
+                    // To prevent thread for previous speech (which may be still running)
+                    // from writing to the same file.
+                    context.deleteFile(TEMP_FILE_NAME);
+                    // It seems we need to make it world readable to let MediaPlayer
+                    // play it.
+                    this.localFile = context.openFileOutput(
+                            TEMP_FILE_NAME, Context.MODE_WORLD_READABLE);
+                } else {
+                    this.localPath = localPath;
+                    this.localFile = new FileOutputStream(localPath);
+                }
             } catch (FileNotFoundException e) {
                 throw new RuntimeException(e);
             }
@@ -149,6 +157,11 @@ public class JapaneseTextToSpeech {
             urlconn.setInstanceFollowRedirects(true);
             urlconn.connect();
 
+            if (urlconn.getResponseCode() < 200 || urlconn.getResponseCode() >= 300) {
+                throw new RuntimeException(String.format("%03d %s",
+                        urlconn.getResponseCode(), urlconn.getResponseMessage()));
+            }
+
             log("loading " + url.toString());
             InputStream in = urlconn.getInputStream();
             int read;
@@ -159,12 +172,6 @@ public class JapaneseTextToSpeech {
             localFile.close();
             in.close();
             urlconn.disconnect();
-
-            // It seems we need to chmod the file to make MediaPlayer play it.
-            log("chmoding " + localPath);
-            Process process = Runtime.getRuntime().exec(
-                    new String[]{ "/system/bin/chmod", "644", localPath });
-            process.waitFor();
             
         }
         
@@ -172,13 +179,13 @@ public class JapaneseTextToSpeech {
             handler.post(new Runnable() {
                 public void run() {
                     if (id != currentId) return;
-                    log("speaking " + tempPath);
+                    log("speaking " + localPath);
                     setState(JapaneseTextToSpeech.State.SPEAKING, Speech.this);
                     currentPlayer = player;
                     player.reset();
                     player.setAudioStreamType(getStreamType());
                     try {
-                        player.setDataSource(tempPath);
+                        player.setDataSource(localPath);
                         player.prepare();
                     } catch (IllegalArgumentException e) {
                         notifyError(e, Speech.this); return;
@@ -221,11 +228,12 @@ public class JapaneseTextToSpeech {
         public void onCompletion(MediaPlayer mp) {
             log("completed");
             if (currentSpeech == null) return;
-            if (onUtteranceCompleted != null) {
-                onUtteranceCompleted.onUtteranceCompleted(getUtteranceId(currentSpeech));
-            }
+            String id = getUtteranceId(currentSpeech);
             setState(JapaneseTextToSpeech.State.IDLE, currentSpeech);
             currentSpeech = null;
+            if (onUtteranceCompleted != null) {
+                onUtteranceCompleted.onUtteranceCompleted(id);
+            }
         }
     };
     
@@ -243,6 +251,7 @@ public class JapaneseTextToSpeech {
     
     private void notifyError(final Exception exception, final Speech speech) {
         exception.printStackTrace();
+        setState(JapaneseTextToSpeech.State.IDLE, speech);
         if (onError != null) {
             handler.post(new Runnable() {
                 public void run() {
@@ -250,7 +259,6 @@ public class JapaneseTextToSpeech {
                 }
             });
         }
-        setState(JapaneseTextToSpeech.State.IDLE, speech);
     }
     
     private static String getUtteranceId(Speech speech) {

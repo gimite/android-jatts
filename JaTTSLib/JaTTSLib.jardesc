@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="MS932" standalone="no"?>
 <jardesc>
-    <jar path="C:/Home/Test/jatts.jar"/>
+    <jar path="JaTTSLib/out/android-jatts.jar"/>
     <options buildIfNeeded="true" compress="true" descriptionLocation="/JaTTSLib/JaTTSLib.jardesc" exportErrors="true" exportWarnings="true" includeDirectoryEntries="false" overwrite="false" saveDescription="true" storeRefactorings="false" useSourceFolders="false"/>
     <storedRefactorings deprecationInfo="true" structuralOnly="false"/>
     <selectedProjects/>
